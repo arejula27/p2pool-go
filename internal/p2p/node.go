@@ -31,8 +31,14 @@ type Node struct {
 }
 
 // NewNode creates and starts a new libp2p node.
-func NewNode(ctx context.Context, listenPort int, enableMDNS bool, bootnodes []string, logger *zap.Logger) (*Node, error) {
+func NewNode(ctx context.Context, listenPort int, enableMDNS bool, bootnodes []string, dataDir string, logger *zap.Logger) (*Node, error) {
 	listenAddr := fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", listenPort)
+
+	// Load or create persistent identity (stable peer ID across restarts)
+	privKey, err := LoadOrCreateIdentity(dataDir)
+	if err != nil {
+		return nil, fmt.Errorf("load identity: %w", err)
+	}
 
 	cm, err := connmgr.NewConnManager(50, 100, connmgr.WithGracePeriod(time.Minute))
 	if err != nil {
@@ -40,6 +46,7 @@ func NewNode(ctx context.Context, listenPort int, enableMDNS bool, bootnodes []s
 	}
 
 	h, err := libp2p.New(
+		libp2p.Identity(privKey),
 		libp2p.ListenAddrStrings(listenAddr),
 		libp2p.Security(noise.ID, noise.New),
 		libp2p.Muxer(yamux.ID, yamux.DefaultTransport),

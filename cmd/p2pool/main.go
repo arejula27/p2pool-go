@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/djkazic/p2pool-go/internal/config"
@@ -27,8 +28,10 @@ func run() error {
 
 	// Define CLI flags
 	var minerAddress string
+	var bootnodes string
 
 	flag.StringVar(&minerAddress, "address", "", "your payout address (required, bech32 testnet: tb1...)")
+	flag.StringVar(&bootnodes, "bootnodes", "", "comma-separated list of bootnode multiaddrs for WAN discovery")
 	flag.StringVar(&cfg.BitcoinRPCHost, "rpc-host", cfg.BitcoinRPCHost, "bitcoind RPC host")
 	flag.IntVar(&cfg.BitcoinRPCPort, "rpc-port", cfg.BitcoinRPCPort, "bitcoind RPC port")
 	flag.StringVar(&cfg.BitcoinRPCUser, "rpc-user", cfg.BitcoinRPCUser, "bitcoind RPC username")
@@ -51,6 +54,7 @@ func run() error {
 		fmt.Fprintf(os.Stderr, "  BITCOIN_RPC_USER      Override -rpc-user\n")
 		fmt.Fprintf(os.Stderr, "  BITCOIN_RPC_PASSWORD   Override -rpc-password\n")
 		fmt.Fprintf(os.Stderr, "  P2POOL_DATA_DIR       Override -data-dir\n")
+		fmt.Fprintf(os.Stderr, "  P2POOL_BOOTNODES      Override -bootnodes\n")
 		fmt.Fprintf(os.Stderr, "  LOG_LEVEL             Override -log-level\n")
 	}
 
@@ -73,9 +77,28 @@ func run() error {
 		cfg.LogLevel = v
 	}
 
+	// Parse bootnodes
+	if bootnodes != "" {
+		for _, bn := range strings.Split(bootnodes, ",") {
+			bn = strings.TrimSpace(bn)
+			if bn != "" {
+				cfg.P2PBootnodes = append(cfg.P2PBootnodes, bn)
+			}
+		}
+	}
+	if v := os.Getenv("P2POOL_BOOTNODES"); v != "" {
+		cfg.P2PBootnodes = nil // env var replaces flag entirely
+		for _, bn := range strings.Split(v, ",") {
+			bn = strings.TrimSpace(bn)
+			if bn != "" {
+				cfg.P2PBootnodes = append(cfg.P2PBootnodes, bn)
+			}
+		}
+	}
+
 	// Validate required flags
 	if minerAddress == "" {
-		fmt.Fprintf(os.Stderr, "Error: --address is required\n\n")
+		fmt.Fprintf(os.Stderr, "Error: -address is required\n\n")
 		flag.Usage()
 		os.Exit(1)
 	}

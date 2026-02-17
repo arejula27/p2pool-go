@@ -133,6 +133,27 @@ Exposed at `/metrics` on the stratum port. Gauges are updated every 30 seconds; 
 - **CBOR encoding** — Compact binary serialization for all P2P messages
 - **Hardened** — 30s stream deadlines, message size caps (1MB sync, 100KB coinbase), field length validation
 
+### Bootstrapping
+
+On a LAN, nodes find each other automatically via mDNS. For WAN (internet) discovery, at least one public bootnode is needed:
+
+1. **Run a bootnode** — Start p2pool on a server with a public IP (or port-forwarded port 9171). On startup it logs its multiaddr:
+   ```
+   listening on  {"addr": "/ip4/203.0.113.5/tcp/9171/p2p/12D3KooWABC..."}
+   ```
+
+2. **Connect other nodes** — Pass that multiaddr to other nodes:
+   ```bash
+   ./build/p2pool -address tb1q... -bootnodes /ip4/203.0.113.5/tcp/9171/p2p/12D3KooWABC...
+   ```
+
+3. **Multiple bootnodes** — Comma-separate for redundancy:
+   ```bash
+   -bootnodes /ip4/1.2.3.4/tcp/9171/p2p/12D3KooW...,/ip4/5.6.7.8/tcp/9171/p2p/12D3KooW...
+   ```
+
+Once connected to any peer, the Kademlia DHT propagates peer info so nodes discover each other transitively — the bootnode is only needed for the initial introduction.
+
 ### Block Submission
 
 - **Retry with backoff** — Transient RPC failures retry up to 3 times (1s → 2s → 4s)
@@ -155,6 +176,7 @@ Exposed at `/metrics` on the stratum port. Gauges are updated every 30 seconds; 
 | `-stratum-port` | `3333` | Stratum server port (also serves HTTP dashboard) |
 | `-start-difficulty` | `100000` | Initial stratum difficulty (vardiff adjusts from here) |
 | `-p2p-port` | `9171` | P2P listen port |
+| `-bootnodes` | *(none)* | Comma-separated bootnode multiaddrs for WAN discovery |
 | `-mdns` | `true` | Enable mDNS LAN discovery |
 | `-data-dir` | `.p2pool` | Persistent data directory |
 | `-log-level` | `info` | Log level (`debug`, `info`, `warn`, `error`) |
@@ -169,6 +191,7 @@ Environment variables override flags (useful for containers):
 | `BITCOIN_RPC_USER` | `-rpc-user` |
 | `BITCOIN_RPC_PASSWORD` | `-rpc-password` |
 | `P2POOL_DATA_DIR` | `-data-dir` |
+| `P2POOL_BOOTNODES` | `-bootnodes` |
 | `LOG_LEVEL` | `-log-level` |
 
 ### Running on Mainnet

@@ -88,6 +88,20 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+// DefaultBootnodes returns the built-in bootnode list for a given network.
+// Users can add more via -bootnodes; these are always included.
+func DefaultBootnodes(network string) []string {
+	switch network {
+	case "mainnet":
+		return []string{
+			// pool.eldamar.icu — primary mainnet bootnode
+			"/dns4/pool.eldamar.icu/tcp/9171/p2p/12D3KooWAE5cgq3g5y5PttxWXiJVwuyzGzHHht7X6Xcz27hmQBiY",
+		}
+	default:
+		return nil
+	}
+}
+
 // BitcoinRPCURL returns the full RPC URL.
 func (c *Config) BitcoinRPCURL() string {
 	return fmt.Sprintf("http://%s:%d", c.BitcoinRPCHost, c.BitcoinRPCPort)

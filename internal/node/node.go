@@ -154,8 +154,9 @@ func (n *Node) Start(ctx context.Context) error {
 	)
 	n.workGen.Start(ctx)
 
-	// P2P Node
-	n.p2pNode, err = p2p.NewNode(ctx, n.config.P2PPort, n.config.EnableMDNS, n.config.P2PBootnodes, n.logger)
+	// P2P Node — merge default bootnodes with user-provided ones
+	allBootnodes := append(config.DefaultBootnodes(n.config.BitcoinNetwork), n.config.P2PBootnodes...)
+	n.p2pNode, err = p2p.NewNode(ctx, n.config.P2PPort, n.config.EnableMDNS, allBootnodes, n.config.DataDir, n.logger)
 	if err != nil {
 		return fmt.Errorf("p2p node: %w", err)
 	}
