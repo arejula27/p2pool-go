@@ -1027,8 +1027,10 @@ func poolHashrateFromShares(shares []*types.Share) float64 {
 	}
 	diff1 := util.CompactToTarget(0x1d00ffff)
 	diff1Float := new(big.Float).SetInt(diff1)
+	// Exclude the oldest share's work — it was done before the measurement
+	// window begins (oldest→newest). Only count work within that interval.
 	var totalWork float64
-	for _, s := range shares {
+	for _, s := range shares[:len(shares)-1] {
 		if s.ShareTarget != nil && s.ShareTarget.Sign() > 0 {
 			shareDiff, _ := new(big.Float).Quo(
 				diff1Float,
