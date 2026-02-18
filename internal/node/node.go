@@ -1005,6 +1005,7 @@ func (n *Node) dashboardData() *web.StatusData {
 		LastBlockFoundHash: lastBlockHash,
 		EstTimeToBlock:     estTimeToBlock,
 		History:            n.getGraphHistory(),
+		OurAddress:         n.minerAddress,
 	}
 }
 

@@ -34,6 +34,7 @@ type StatusData struct {
 	LastBlockFoundHash string         `json:"last_block_found_hash"`
 	EstTimeToBlock     int64          `json:"est_time_to_block"`
 	History            []HistoryPoint `json:"history"`
+	OurAddress         string         `json:"our_address"`
 }
 
 // ShareInfo describes a single share for the dashboard.

@@ -25,8 +25,9 @@ h1{font-size:1.5rem;font-weight:600;color:#f0f6fc;margin-bottom:4px}
 table{width:100%;border-collapse:collapse}
 th{text-align:left;color:#8b949e;font-size:0.7rem;text-transform:uppercase;letter-spacing:0.5px;padding:6px 8px;border-bottom:1px solid #30363d}
 td{padding:8px;font-size:0.8rem;border-bottom:1px solid #21262d;font-family:"SF Mono",SFMono-Regular,Consolas,"Liberation Mono",Menlo,monospace}
-td.miner{max-width:200px}
-td.hash{color:#8b949e;cursor:pointer;word-break:break-all;white-space:normal}
+td.miner{word-break:break-all;white-space:normal}
+td.miner.other a.addr{color:#6e7681}
+td.hash{color:#8b949e;cursor:pointer;word-break:break-all;white-space:normal;width:45%}
 td.hash:hover{color:#58a6ff;text-decoration:underline}
 a.addr{color:#58a6ff;text-decoration:none;word-break:break-all}
 a.addr:hover{text-decoration:underline}
@@ -165,7 +166,7 @@ function esc(s){
   if(!s)return"";
   return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
 }
-var _net="";
+var _net="",_ourAddr="";
 function addrLink(addr){
   if(!addr)return"-";
   var prefix=(_net==="mainnet"||!_net)?"":"/"+ _net.replace("testnet3","testnet");
@@ -386,6 +387,7 @@ document.getElementById("share-modal").addEventListener("click",function(e){
 /* ---- Main update ---- */
 function update(data){
   _net=data.network||"";
+  _ourAddr=data.our_address||"";
   document.getElementById("shares").textContent=data.share_count;
   document.getElementById("miners-peers").textContent=data.miner_count+" | "+data.peer_count;
   document.getElementById("difficulty").textContent=fmtDiff(data.difficulty);
@@ -414,7 +416,8 @@ function update(data){
       var s=data.recent_shares[i];
       var rowCls=s.is_block?' class="golden"':"";
       var badge=s.is_block?'<span class="golden-badge">BLOCK</span>':"";
-      h+='<tr'+rowCls+'><td class="hash" onclick="openShareDetail(\''+esc(s.hash)+'\')">'+esc(s.hash)+badge+'</td><td class="miner">'+addrLink(s.miner)+'</td><td class="time">'+timeAgo(s.timestamp)+'</td></tr>';
+      var minerCls=(_ourAddr&&s.miner!==_ourAddr)?"miner other":"miner";
+      h+='<tr'+rowCls+'><td class="hash" onclick="openShareDetail(\''+esc(s.hash)+'\')">'+esc(s.hash)+badge+'</td><td class="'+minerCls+'">'+addrLink(s.miner)+'</td><td class="time">'+timeAgo(s.timestamp)+'</td></tr>';
     }
     tb.innerHTML=h;
   }
