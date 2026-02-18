@@ -411,6 +411,11 @@ func (sc *ShareChain) ValidateLoaded() error {
 
 	sc.logger.Info("validating loaded shares", zap.Int("count", len(ancestors)))
 
+	// Skip timestamp checks during replay — these shares were already
+	// validated against the clock when they were first accepted.
+	sc.validator.skipTimeChecks = true
+	defer func() { sc.validator.skipTimeChecks = false }()
+
 	for _, share := range ancestors {
 		if err := sc.validator.ValidateShare(share); err != nil {
 			return fmt.Errorf("invalid share %x: %w", share.Hash(), err)

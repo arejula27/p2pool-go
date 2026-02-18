@@ -37,9 +37,10 @@ func (e *ValidationError) Error() string {
 
 // Validator validates incoming shares.
 type Validator struct {
-	store      ShareStore
-	targetFunc func(parentHash [32]byte) *big.Int
-	network    string
+	store          ShareStore
+	targetFunc     func(parentHash [32]byte) *big.Int
+	network        string
+	skipTimeChecks bool // set during ValidateLoaded replay
 }
 
 // NewValidator creates a new share validator.
@@ -82,22 +83,24 @@ func (v *Validator) ValidateShare(share *types.Share) error {
 		}
 	}
 
-	// 4. Timestamp validation
-	now := time.Now()
-	shareTime := share.Time()
+	// 4. Timestamp validation (skipped when replaying from disk)
+	if !v.skipTimeChecks {
+		now := time.Now()
+		shareTime := share.Time()
 
-	// Not too far in the future
-	if shareTime.After(now.Add(MaxTimeFuture)) {
-		return &ValidationError{Reason: fmt.Sprintf("share timestamp %v is too far in the future", shareTime)}
-	}
+		// Not too far in the future
+		if shareTime.After(now.Add(MaxTimeFuture)) {
+			return &ValidationError{Reason: fmt.Sprintf("share timestamp %v is too far in the future", shareTime)}
+		}
 
-	// Not too far behind parent
-	if share.PrevShareHash != zeroHash {
-		parent, ok := v.store.Get(share.PrevShareHash)
-		if ok {
-			parentTime := parent.Time()
-			if shareTime.Before(parentTime.Add(-MaxTimePast)) {
-				return &ValidationError{Reason: "share timestamp is too far behind parent"}
+		// Not too far behind parent
+		if share.PrevShareHash != zeroHash {
+			parent, ok := v.store.Get(share.PrevShareHash)
+			if ok {
+				parentTime := parent.Time()
+				if shareTime.Before(parentTime.Add(-MaxTimePast)) {
+					return &ValidationError{Reason: "share timestamp is too far behind parent"}
+				}
 			}
 		}
 	}
