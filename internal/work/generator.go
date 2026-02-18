@@ -114,11 +114,13 @@ func (g *Generator) GenerateJob() (*JobData, error) {
 		TxHashes:          extractTxHashes(tmpl),
 	}
 
-	jobID := fmt.Sprintf("%x", g.jobCounter.Add(1))
+	seq := g.jobCounter.Add(1)
+	jobID := fmt.Sprintf("%x", seq)
 	job, err := BuildJobFromTemplate(jobID, tmplData, payouts, prevShareHash, g.extranonceSize)
 	if err != nil {
 		return nil, fmt.Errorf("build job: %w", err)
 	}
+	job.Seq = seq
 	job.Template = tmpl
 
 	g.storeJob(job)
@@ -138,15 +140,16 @@ func (g *Generator) storeJob(job *JobData) {
 
 	g.jobs[job.ID] = job
 
-	if len(g.jobs) > maxStoredJobs {
-		for id := range g.jobs {
-			if id != job.ID {
-				delete(g.jobs, id)
-				if len(g.jobs) <= maxStoredJobs {
-					break
-				}
+	for len(g.jobs) > maxStoredJobs {
+		oldestID := ""
+		var oldestSeq uint64
+		for id, j := range g.jobs {
+			if oldestID == "" || j.Seq < oldestSeq {
+				oldestID = id
+				oldestSeq = j.Seq
 			}
 		}
+		delete(g.jobs, oldestID)
 	}
 }
 

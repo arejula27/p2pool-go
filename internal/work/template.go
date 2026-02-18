@@ -141,6 +141,7 @@ func BuildJobFromTemplate(
 // JobData contains the full job data including internal fields not sent to miners.
 type JobData struct {
 	ID               string
+	Seq              uint64
 	PrevBlockHash    string
 	Coinbase1        string
 	Coinbase2        string
