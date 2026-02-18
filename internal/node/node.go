@@ -795,11 +795,20 @@ func (n *Node) logStatus() {
 	n.recordGraphPoint(poolHR, shareCount)
 }
 
+const minGraphInterval = 20 * time.Second
+
 func (n *Node) recordGraphPoint(poolHashrate float64, shareCount int) {
+	now := time.Now()
 	n.graphHistoryMu.Lock()
 	defer n.graphHistoryMu.Unlock()
+	if len(n.graphHistory) > 0 {
+		last := n.graphHistory[len(n.graphHistory)-1].Timestamp
+		if now.Unix()-last < int64(minGraphInterval.Seconds()) {
+			return
+		}
+	}
 	n.graphHistory = append(n.graphHistory, web.HistoryPoint{
-		Timestamp:    time.Now().Unix(),
+		Timestamp:    now.Unix(),
 		PoolHashrate: poolHashrate,
 		ShareCount:   shareCount,
 	})
