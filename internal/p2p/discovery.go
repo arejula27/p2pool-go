@@ -3,6 +3,7 @@ package p2p
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -92,19 +93,33 @@ func (d *Discovery) HandlePeerFound(pi peer.AddrInfo) {
 }
 
 func (d *Discovery) advertiseLoop(ctx context.Context, rd *drouting.RoutingDiscovery) {
+	backoff := 5 * time.Second
+	const maxBackoff = 60 * time.Second
+
 	for {
 		_, err := rd.Advertise(ctx, DHTNamespace)
 		if err != nil {
-			d.logger.Debug("DHT advertise error", zap.Error(err))
+			d.logger.Debug("DHT advertise error", zap.Error(err), zap.Duration("retry_in", backoff))
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(backoff):
+			}
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+			continue
 		}
 
+		// Success — reset backoff and wait for context cancellation.
+		// Advertise blocks until TTL expires, so we loop back to re-advertise.
+		backoff = 5 * time.Second
 		select {
 		case <-ctx.Done():
 			return
 		default:
 		}
-
-		// Re-advertise periodically (the Advertise call blocks until TTL expires)
 	}
 }
 
