@@ -49,9 +49,8 @@ type Node struct {
 
 	minerAddress string
 
-	// Sync: track which peers are currently being synced to avoid duplicates
-	syncingPeers   map[peer.ID]struct{}
-	syncingPeersMu sync.Mutex
+	// Sync: only one sync cycle runs at a time
+	syncMu sync.Mutex
 
 	// Reorg tracking: skip duplicate EventNewTip after reorg
 	lastReorgTip [32]byte
@@ -88,7 +87,6 @@ func NewNode(cfg *config.Config, minerAddress string, logger *zap.Logger) *Node 
 		config:       cfg,
 		logger:       logger,
 		minerAddress: minerAddress,
-		syncingPeers: make(map[peer.ID]struct{}),
 	}
 }
 
@@ -164,7 +162,7 @@ func (n *Node) Start(ctx context.Context) error {
 
 	// Register sync protocol BEFORE discovery so peers can't connect
 	// before the handler is ready (fixes "protocols not supported" race)
-	n.p2pNode.InitSyncer(n.handleLocatorRequest)
+	n.p2pNode.InitSyncer(n.handleInvRequest, n.handleDataRequest)
 
 	// Now start discovery — peers will find us with all handlers registered
 	allBootnodes := append(config.DefaultBootnodes(n.config.BitcoinNetwork), n.config.P2PBootnodes...)
@@ -236,9 +234,9 @@ func (n *Node) eventLoop(ctx context.Context) {
 		case event := <-chainEvents:
 			n.handleChainEvent(event)
 
-		// New peer connected — trigger sync
-		case peerID := <-n.p2pNode.PeerConnected():
-			go n.syncFromPeer(ctx, peerID)
+		// New peer connected — trigger sync from all peers
+		case <-n.p2pNode.PeerConnected():
+			go n.syncFromAllPeers(ctx)
 
 		// Periodic status log
 		case <-statusTicker.C:
@@ -456,78 +454,6 @@ func (n *Node) handleChainEvent(event sharechain.Event) {
 	}
 }
 
-// handleLocatorRequest serves share data to a peer performing locator-based sync.
-func (n *Node) handleLocatorRequest(req *p2p.ShareLocatorReq) *p2p.ShareLocatorResp {
-	tip, ok := n.chain.Tip()
-	if !ok {
-		return &p2p.ShareLocatorResp{Type: p2p.MsgTypeLocatorResp}
-	}
-
-	tipHash := tip.Hash()
-
-	// Get all ancestors of our tip (tip → genesis order)
-	ancestors := n.chain.GetAncestors(tipHash, n.chain.Count())
-
-	// Build a set of main-chain hashes for fast lookup
-	mainSet := make(map[[32]byte]int, len(ancestors))
-	for i, s := range ancestors {
-		mainSet[s.Hash()] = i
-	}
-
-	// Find the first locator hash that exists on our main chain (fork point)
-	forkIdx := -1
-	for _, loc := range req.Locators {
-		if idx, found := mainSet[loc]; found {
-			forkIdx = idx
-			break
-		}
-	}
-
-	// ancestors is tip→genesis (index 0=tip, len-1=genesis).
-	// We want shares AFTER the fork point, in oldest-first order.
-	//
-	// forkIdx == -1 → no locator matched → send all shares from genesis
-	// forkIdx == 0  → locator matched the tip → peer is in sync
-	// forkIdx == N  → N shares exist between fork point and tip
-	var afterFork int
-	if forkIdx < 0 {
-		// No locator matched — peer has nothing, send everything
-		afterFork = len(ancestors)
-	} else {
-		afterFork = forkIdx
-	}
-
-	if afterFork == 0 {
-		// Fork point is the tip — peer is already in sync
-		return &p2p.ShareLocatorResp{Type: p2p.MsgTypeLocatorResp}
-	}
-
-	maxCount := req.MaxCount
-	if maxCount <= 0 {
-		maxCount = syncBatchSize
-	}
-
-	// Build oldest-first slice from ancestors
-	more := false
-	count := afterFork
-	if count > maxCount {
-		count = maxCount
-		more = true
-	}
-
-	shares := make([]p2p.ShareMsg, count)
-	for i := 0; i < count; i++ {
-		// ancestors[afterFork-1] is oldest after fork, ancestors[0] is tip
-		shares[i] = *shareToP2PMsg(ancestors[afterFork-1-i])
-	}
-
-	return &p2p.ShareLocatorResp{
-		Type:   p2p.MsgTypeLocatorResp,
-		Shares: shares,
-		More:   more,
-	}
-}
-
 // buildLocator builds an exponentially-spaced list of share hashes from our
 // chain tip, used for locator-based sync. Returns hashes at positions:
 // tip, tip-1, tip-2, ..., tip-9, tip-11, tip-15, tip-23, ..., genesis.
@@ -565,83 +491,271 @@ func (n *Node) buildLocator() [][32]byte {
 	return locators
 }
 
-// syncFromPeer performs locator-based sharechain sync from a connected peer.
-// Multiple peers can sync concurrently, but each peer only syncs once at a time.
-func (n *Node) syncFromPeer(ctx context.Context, peerID peer.ID) {
-	// Skip if already syncing from this peer
-	n.syncingPeersMu.Lock()
-	if _, active := n.syncingPeers[peerID]; active {
-		n.syncingPeersMu.Unlock()
+// handleInvRequest serves a hash inventory to a peer performing inv-based sync.
+func (n *Node) handleInvRequest(req *p2p.InvReq) *p2p.InvResp {
+	tip, ok := n.chain.Tip()
+	if !ok {
+		return &p2p.InvResp{Type: p2p.MsgTypeInvResp}
+	}
+
+	tipHash := tip.Hash()
+	ancestors := n.chain.GetAncestors(tipHash, n.chain.Count())
+
+	// Build a set of main-chain hashes for fast lookup
+	mainSet := make(map[[32]byte]int, len(ancestors))
+	for i, s := range ancestors {
+		mainSet[s.Hash()] = i
+	}
+
+	// Find the first locator hash on our main chain (fork point)
+	forkIdx := -1
+	for _, loc := range req.Locators {
+		if idx, found := mainSet[loc]; found {
+			forkIdx = idx
+			break
+		}
+	}
+
+	var afterFork int
+	if forkIdx < 0 {
+		afterFork = len(ancestors)
+	} else {
+		afterFork = forkIdx
+	}
+
+	if afterFork == 0 {
+		return &p2p.InvResp{Type: p2p.MsgTypeInvResp}
+	}
+
+	maxCount := req.MaxCount
+	if maxCount <= 0 {
+		maxCount = 10000
+	}
+
+	more := false
+	count := afterFork
+	if count > maxCount {
+		count = maxCount
+		more = true
+	}
+
+	// Return hashes in oldest-first order
+	hashes := make([][32]byte, count)
+	for i := 0; i < count; i++ {
+		hashes[i] = ancestors[afterFork-1-i].Hash()
+	}
+
+	return &p2p.InvResp{
+		Type:   p2p.MsgTypeInvResp,
+		Hashes: hashes,
+		More:   more,
+	}
+}
+
+// handleDataRequest serves full share data for requested hashes.
+func (n *Node) handleDataRequest(req *p2p.DataReq) *p2p.DataResp {
+	var shares []p2p.ShareMsg
+	for _, h := range req.Hashes {
+		share, ok := n.chain.GetShare(h)
+		if !ok {
+			continue
+		}
+		shares = append(shares, *shareToP2PMsg(share))
+	}
+	return &p2p.DataResp{
+		Type:   p2p.MsgTypeDataResp,
+		Shares: shares,
+	}
+}
+
+// syncFromAllPeers performs inv-based sharechain sync across all connected peers.
+// Phase 1: hash discovery from all peers in parallel (cheap).
+// Phase 2: targeted download, each share from one peer only (no duplicates).
+func (n *Node) syncFromAllPeers(ctx context.Context) {
+	// Only one sync cycle at a time
+	if !n.syncMu.TryLock() {
 		return
 	}
-	n.syncingPeers[peerID] = struct{}{}
-	n.syncingPeersMu.Unlock()
-
-	defer func() {
-		n.syncingPeersMu.Lock()
-		delete(n.syncingPeers, peerID)
-		n.syncingPeersMu.Unlock()
-	}()
+	defer n.syncMu.Unlock()
 
 	syncer := n.p2pNode.Syncer()
 	if syncer == nil {
 		return
 	}
 
-	n.logger.Info("starting sharechain sync", zap.String("peer", peerID.String()))
+	peers := n.p2pNode.ConnectedPeers()
+	if len(peers) == 0 {
+		return
+	}
+
+	n.logger.Info("starting inv-based sync", zap.Int("peers", len(peers)))
 
 	totalAdded := 0
-	totalSkipped := 0
 
 	for {
 		locators := n.buildLocator()
 
-		resp, err := syncer.RequestLocator(ctx, peerID, locators, syncBatchSize)
-		if err != nil {
-			n.logger.Warn("sync request failed", zap.Error(err), zap.String("peer", peerID.String()))
+		// Phase 1: Hash discovery — query all peers in parallel
+		type invResult struct {
+			peerID peer.ID
+			resp   *p2p.InvResp
+		}
+		resultCh := make(chan invResult, len(peers))
+
+		for _, pid := range peers {
+			go func(pid peer.ID) {
+				resp, err := syncer.RequestInventory(ctx, pid, locators, 10000)
+				if err != nil {
+					n.logger.Debug("inv request failed", zap.Error(err), zap.String("peer", pid.String()))
+					resultCh <- invResult{peerID: pid}
+					return
+				}
+				resultCh <- invResult{peerID: pid, resp: resp}
+			}(pid)
+		}
+
+		// Collect results
+		peerHashes := make(map[peer.ID][][32]byte)
+		anyMore := false
+		for range peers {
+			r := <-resultCh
+			if r.resp == nil {
+				continue
+			}
+			if len(r.resp.Hashes) > 0 {
+				peerHashes[r.peerID] = r.resp.Hashes
+			}
+			if r.resp.More {
+				anyMore = true
+			}
+		}
+
+		// Merge and deduplicate: collect all unique hashes we don't already have
+		seen := make(map[[32]byte]bool)
+		var needed [][32]byte
+		for _, hashes := range peerHashes {
+			for _, h := range hashes {
+				if seen[h] {
+					continue
+				}
+				seen[h] = true
+				if _, known := n.chain.GetShare(h); !known {
+					needed = append(needed, h)
+				}
+			}
+		}
+
+		if len(needed) == 0 {
 			break
 		}
 
-		if len(resp.Shares) == 0 {
+		// Phase 2: Assign contiguous chunks to peers
+		// Shares must be added in oldest-first order (parent before child),
+		// so we split into contiguous ranges rather than interleaving.
+		var activePeers []peer.ID
+		for pid := range peerHashes {
+			activePeers = append(activePeers, pid)
+		}
+		if len(activePeers) == 0 {
 			break
 		}
 
-		// Process response: shares are already in oldest-first order
-		added := 0
-		skipped := 0
-		for _, msg := range resp.Shares {
-			share := p2pShareToShare(&msg)
-			if _, known := n.chain.GetShare(share.Hash()); known {
-				skipped++
+		assignments := make(map[peer.ID][][32]byte)
+		chunkSize := (len(needed) + len(activePeers) - 1) / len(activePeers)
+		for i, pid := range activePeers {
+			start := i * chunkSize
+			if start >= len(needed) {
+				break
+			}
+			end := start + chunkSize
+			if end > len(needed) {
+				end = len(needed)
+			}
+			assignments[pid] = needed[start:end]
+		}
+
+		// Phase 3: Download from each peer in parallel
+		type dataResult struct {
+			peerID peer.ID
+			shares []*types.Share
+		}
+		dataCh := make(chan dataResult, len(assignments))
+
+		for pid, hashes := range assignments {
+			go func(pid peer.ID, hashes [][32]byte) {
+				var allShares []*types.Share
+				for len(hashes) > 0 {
+					batch := hashes
+					if len(batch) > syncBatchSize {
+						batch = hashes[:syncBatchSize]
+					}
+					hashes = hashes[len(batch):]
+
+					resp, err := syncer.RequestData(ctx, pid, batch)
+					if err != nil {
+						n.logger.Debug("data request failed", zap.Error(err), zap.String("peer", pid.String()))
+						break
+					}
+					for _, msg := range resp.Shares {
+						allShares = append(allShares, p2pShareToShare(&msg))
+					}
+				}
+				dataCh <- dataResult{peerID: pid, shares: allShares}
+			}(pid, hashes)
+		}
+
+		// Collect all downloaded shares into a hash-indexed map
+		shareByHash := make(map[[32]byte]*types.Share)
+		peerDownloaded := make(map[peer.ID]int)
+		for range assignments {
+			r := <-dataCh
+			for _, share := range r.shares {
+				shareByHash[share.Hash()] = share
+			}
+			peerDownloaded[r.peerID] = len(r.shares)
+		}
+
+		// Add shares in chain order (oldest-first) to satisfy parent deps
+		for _, h := range needed {
+			share, ok := shareByHash[h]
+			if !ok {
 				continue
 			}
 			if err := n.chain.AddShareQuiet(share); err != nil {
 				n.logger.Debug("sync: rejected share", zap.Error(err))
 				continue
 			}
-			added++
+			totalAdded++
 		}
 
-		totalAdded += added
-		totalSkipped += skipped
+		// Log per-peer download stats
+		for pid, count := range peerDownloaded {
+			if count > 0 {
+				n.logger.Debug("downloaded from peer",
+					zap.String("peer", pid.String()),
+					zap.Int("shares", count),
+				)
+			}
+		}
 
-		if !resp.More {
+		if !anyMore {
 			break
 		}
-
-		// More shares available — rebuild locator from updated chain and repeat
 	}
 
 	n.logger.Info("sync complete",
-		zap.String("peer", peerID.String()),
 		zap.Int("downloaded", totalAdded),
-		zap.Int("duplicate", totalSkipped),
+		zap.Int("peers", len(peers)),
 		zap.Int("chain_length", n.chain.Count()),
 	)
 
-	// Trigger a single work regeneration now that the chain tip has changed
+	// Trigger work regeneration if shares were added.
+	// Skip if no block template is available yet (common during startup —
+	// sync can complete before the work generator fetches its first template).
 	if totalAdded > 0 {
-		if job, err := n.workGen.GenerateJob(); err != nil {
+		if n.workGen.CurrentTemplate() == nil {
+			n.logger.Debug("skipping job generation after sync — no block template yet")
+		} else if job, err := n.workGen.GenerateJob(); err != nil {
 			n.logger.Error("failed to generate job after sync", zap.Error(err))
 		} else {
 			n.handleNewJob(job)

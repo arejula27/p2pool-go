@@ -119,10 +119,10 @@ func (n *Node) ConnectedPeers() []peer.ID {
 	return n.Host.Network().Peers()
 }
 
-// InitSyncer creates the Syncer and registers the stream handler.
-// Must be called after the sharechain is ready.
-func (n *Node) InitSyncer(handler SyncHandler) {
-	n.syncer = NewSyncer(n.Host, handler, n.Logger)
+// InitSyncer creates the Syncer and registers stream handlers for
+// inv-based sync (hash discovery) and data protocol (targeted download).
+func (n *Node) InitSyncer(invHandler InvHandler, dataHandler DataHandler) {
+	n.syncer = NewSyncer(n.Host, invHandler, dataHandler, n.Logger)
 }
 
 // PeerConnected returns a channel that receives peer IDs when new peers connect.

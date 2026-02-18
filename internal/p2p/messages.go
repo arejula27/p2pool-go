@@ -22,8 +22,11 @@ const (
 	ShareTopicName = "/p2pool/shares/" + ProtocolVersion
 
 	// SyncProtocolID is the protocol ID for initial sync.
-	// Version 2.0.0: locator-based sync (incompatible with v1 batch sync).
-	SyncProtocolID = "/p2pool/sync/2.0.0"
+	// Version 3.0.0: inv-based sync (hash discovery + targeted download).
+	SyncProtocolID = "/p2pool/sync/3.0.0"
+
+	// DataProtocolID is the protocol ID for hash-targeted share downloads.
+	DataProtocolID = "/p2pool/data/1.0.0"
 )
 
 // MessageType identifies the type of P2P message.
@@ -34,8 +37,10 @@ const (
 	MsgTypeTipAnnounce MessageType = 2
 	MsgTypeShareReq    MessageType = 3
 	MsgTypeShareResp   MessageType = 4
-	MsgTypeLocatorReq  MessageType = 5
-	MsgTypeLocatorResp MessageType = 6
+	MsgTypeInvReq      MessageType = 7
+	MsgTypeInvResp     MessageType = 8
+	MsgTypeDataReq     MessageType = 9
+	MsgTypeDataResp    MessageType = 10
 )
 
 // ShareMsg is a share broadcast via GossipSub.
@@ -126,32 +131,62 @@ func DecodeShareResponse(data []byte) (*ShareResponse, error) {
 	return &msg, nil
 }
 
-// ShareLocatorReq sends exponentially-spaced hashes from the client's chain tip.
-type ShareLocatorReq struct {
+// InvReq requests a hash inventory from a peer using locators.
+type InvReq struct {
 	Type     MessageType `cbor:"1,keyasint"`
-	Locators [][32]byte  `cbor:"2,keyasint"` // tip, tip-1, tip-2, tip-4, tip-8, ..., genesis
-	MaxCount int         `cbor:"3,keyasint"` // max shares to return
+	Locators [][32]byte  `cbor:"2,keyasint"`
+	MaxCount int         `cbor:"3,keyasint"`
 }
 
-// ShareLocatorResp returns shares from the fork point forward.
-type ShareLocatorResp struct {
+// InvResp returns share hashes from the fork point forward.
+type InvResp struct {
 	Type   MessageType `cbor:"1,keyasint"`
-	Shares []ShareMsg  `cbor:"2,keyasint"` // oldest-first (forward order)
-	More   bool        `cbor:"3,keyasint"` // true if more shares available
+	Hashes [][32]byte  `cbor:"2,keyasint"`
+	More   bool        `cbor:"3,keyasint"`
 }
 
-// DecodeShareLocatorReq decodes a CBOR-encoded ShareLocatorReq.
-func DecodeShareLocatorReq(data []byte) (*ShareLocatorReq, error) {
-	var msg ShareLocatorReq
+// DataReq requests full share data by hash.
+type DataReq struct {
+	Type   MessageType `cbor:"1,keyasint"`
+	Hashes [][32]byte  `cbor:"2,keyasint"`
+}
+
+// DataResp returns full share data for requested hashes.
+type DataResp struct {
+	Type   MessageType `cbor:"1,keyasint"`
+	Shares []ShareMsg  `cbor:"2,keyasint"`
+}
+
+// DecodeInvReq decodes a CBOR-encoded InvReq.
+func DecodeInvReq(data []byte) (*InvReq, error) {
+	var msg InvReq
 	if err := cbor.Unmarshal(data, &msg); err != nil {
 		return nil, err
 	}
 	return &msg, nil
 }
 
-// DecodeShareLocatorResp decodes a CBOR-encoded ShareLocatorResp.
-func DecodeShareLocatorResp(data []byte) (*ShareLocatorResp, error) {
-	var msg ShareLocatorResp
+// DecodeInvResp decodes a CBOR-encoded InvResp.
+func DecodeInvResp(data []byte) (*InvResp, error) {
+	var msg InvResp
+	if err := cbor.Unmarshal(data, &msg); err != nil {
+		return nil, err
+	}
+	return &msg, nil
+}
+
+// DecodeDataReq decodes a CBOR-encoded DataReq.
+func DecodeDataReq(data []byte) (*DataReq, error) {
+	var msg DataReq
+	if err := cbor.Unmarshal(data, &msg); err != nil {
+		return nil, err
+	}
+	return &msg, nil
+}
+
+// DecodeDataResp decodes a CBOR-encoded DataResp.
+func DecodeDataResp(data []byte) (*DataResp, error) {
+	var msg DataResp
 	if err := cbor.Unmarshal(data, &msg); err != nil {
 		return nil, err
 	}
