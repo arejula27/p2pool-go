@@ -263,3 +263,172 @@ func TestInvProtocol_LocatorForkPoint(t *testing.T) {
 		t.Errorf("hash[1] = %x, want %x", resp.Hashes[1], hashD)
 	}
 }
+
+func TestDataProtocol_BatchSizeClamped(t *testing.T) {
+	logger := zap.NewNop()
+
+	hostA := newTestHost(t)
+	hostB := newTestHost(t)
+
+	var receivedCount int
+	noopInv := func(req *InvReq) *InvResp { return &InvResp{Type: MsgTypeInvResp} }
+
+	NewSyncer(hostA, noopInv, func(req *DataReq) *DataResp {
+		receivedCount = len(req.Hashes)
+		return &DataResp{Type: MsgTypeDataResp}
+	}, logger)
+
+	syncerB := NewSyncer(hostB, noopInv, noopDataHandler, logger)
+
+	connectHosts(t, hostA, hostB)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Send more hashes than maxSyncBatchSize
+	hashes := make([][32]byte, 200)
+	for i := range hashes {
+		hashes[i][0] = byte(i)
+		hashes[i][1] = byte(i >> 8)
+	}
+
+	_, err := syncerB.RequestData(ctx, hostA.ID(), hashes)
+	if err != nil {
+		t.Fatalf("RequestData: %v", err)
+	}
+
+	if receivedCount != maxSyncBatchSize {
+		t.Errorf("hash count = %d, want %d (clamped)", receivedCount, maxSyncBatchSize)
+	}
+}
+
+func TestInvProtocol_MoreFlag(t *testing.T) {
+	logger := zap.NewNop()
+
+	hostA := newTestHost(t)
+	hostB := newTestHost(t)
+
+	NewSyncer(hostA, func(req *InvReq) *InvResp {
+		return &InvResp{
+			Type:   MsgTypeInvResp,
+			Hashes: [][32]byte{{0x01}},
+			More:   true,
+		}
+	}, noopDataHandler, logger)
+
+	syncerB := NewSyncer(hostB, func(req *InvReq) *InvResp {
+		return nil
+	}, noopDataHandler, logger)
+
+	connectHosts(t, hostA, hostB)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resp, err := syncerB.RequestInventory(ctx, hostA.ID(), nil, 1)
+	if err != nil {
+		t.Fatalf("RequestInventory: %v", err)
+	}
+
+	if !resp.More {
+		t.Error("expected More=true")
+	}
+	if len(resp.Hashes) != 1 {
+		t.Errorf("expected 1 hash, got %d", len(resp.Hashes))
+	}
+}
+
+func TestInvProtocol_NilHandler(t *testing.T) {
+	logger := zap.NewNop()
+
+	hostA := newTestHost(t)
+	hostB := newTestHost(t)
+
+	NewSyncer(hostA, func(req *InvReq) *InvResp {
+		return nil
+	}, noopDataHandler, logger)
+
+	syncerB := NewSyncer(hostB, func(req *InvReq) *InvResp {
+		return nil
+	}, noopDataHandler, logger)
+
+	connectHosts(t, hostA, hostB)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resp, err := syncerB.RequestInventory(ctx, hostA.ID(), nil, 100)
+	if err != nil {
+		t.Fatalf("RequestInventory: %v", err)
+	}
+
+	if len(resp.Hashes) != 0 {
+		t.Errorf("expected 0 hashes from nil handler, got %d", len(resp.Hashes))
+	}
+}
+
+func TestDataProtocol_EmptyRequest(t *testing.T) {
+	logger := zap.NewNop()
+
+	hostA := newTestHost(t)
+	hostB := newTestHost(t)
+
+	noopInv := func(req *InvReq) *InvResp { return &InvResp{Type: MsgTypeInvResp} }
+
+	NewSyncer(hostA, noopInv, func(req *DataReq) *DataResp {
+		return &DataResp{Type: MsgTypeDataResp}
+	}, logger)
+
+	syncerB := NewSyncer(hostB, noopInv, noopDataHandler, logger)
+
+	connectHosts(t, hostA, hostB)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resp, err := syncerB.RequestData(ctx, hostA.ID(), nil)
+	if err != nil {
+		t.Fatalf("RequestData: %v", err)
+	}
+
+	if len(resp.Shares) != 0 {
+		t.Errorf("expected 0 shares, got %d", len(resp.Shares))
+	}
+}
+
+func TestInvProtocol_LocatorTruncation(t *testing.T) {
+	logger := zap.NewNop()
+
+	hostA := newTestHost(t)
+	hostB := newTestHost(t)
+
+	var receivedLocatorCount int
+	NewSyncer(hostA, func(req *InvReq) *InvResp {
+		receivedLocatorCount = len(req.Locators)
+		return &InvResp{Type: MsgTypeInvResp}
+	}, noopDataHandler, logger)
+
+	syncerB := NewSyncer(hostB, func(req *InvReq) *InvResp {
+		return nil
+	}, noopDataHandler, logger)
+
+	connectHosts(t, hostA, hostB)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Send more locators than maxLocatorCount
+	locators := make([][32]byte, 100)
+	for i := range locators {
+		locators[i][0] = byte(i)
+	}
+
+	_, err := syncerB.RequestInventory(ctx, hostA.ID(), locators, 100)
+	if err != nil {
+		t.Fatalf("RequestInventory: %v", err)
+	}
+
+	if receivedLocatorCount != maxLocatorCount {
+		t.Errorf("locator count = %d, want %d (truncated)", receivedLocatorCount, maxLocatorCount)
+	}
+}
