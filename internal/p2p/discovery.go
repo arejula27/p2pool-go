@@ -32,7 +32,7 @@ type Discovery struct {
 }
 
 // NewDiscovery creates a new discovery service.
-func NewDiscovery(ctx context.Context, h host.Host, enableMDNS bool, bootnodes []string, logger *zap.Logger) (*Discovery, error) {
+func NewDiscovery(ctx context.Context, h host.Host, enableMDNS bool, bootnodes []string, savedPeers []peer.AddrInfo, logger *zap.Logger) (*Discovery, error) {
 	d := &Discovery{
 		host:   h,
 		logger: logger,
@@ -45,6 +45,18 @@ func NewDiscovery(ctx context.Context, h host.Host, enableMDNS bool, bootnodes [
 			logger.Warn("mDNS setup failed", zap.Error(err))
 		} else {
 			logger.Info("mDNS discovery enabled")
+		}
+	}
+
+	// Reconnect to previously known peers before DHT bootstrap
+	for _, pi := range savedPeers {
+		if pi.ID == h.ID() {
+			continue
+		}
+		if err := h.Connect(ctx, pi); err != nil {
+			logger.Debug("failed to connect to saved peer", zap.String("peer", pi.ID.String()), zap.Error(err))
+		} else {
+			logger.Info("connected to saved peer", zap.String("peer", pi.ID.String()))
 		}
 	}
 

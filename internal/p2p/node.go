@@ -2,7 +2,10 @@ package p2p
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/libp2p/go-libp2p"
@@ -17,10 +20,14 @@ import (
 	"go.uber.org/zap"
 )
 
+const peersFile = "peers.json"
+
 // Node manages the libp2p host and P2P networking.
 type Node struct {
 	Host   host.Host
 	Logger *zap.Logger
+
+	dataDir string
 
 	pubsub    *PubSub
 	discovery *Discovery
@@ -62,6 +69,7 @@ func NewNode(ctx context.Context, listenPort int, dataDir string, logger *zap.Lo
 	node := &Node{
 		Host:           h,
 		Logger:         logger,
+		dataDir:        dataDir,
 		incomingShares: make(chan *ShareMsg, 256),
 		peerConnected:  make(chan peer.ID, 16),
 	}
@@ -91,8 +99,14 @@ func NewNode(ctx context.Context, listenPort int, dataDir string, logger *zap.Lo
 // StartDiscovery begins mDNS and DHT peer discovery. Must be called after
 // all stream handlers are registered (InitSyncer, etc.).
 func (n *Node) StartDiscovery(ctx context.Context, enableMDNS bool, bootnodes []string) error {
-	var err error
-	n.discovery, err = NewDiscovery(ctx, n.Host, enableMDNS, bootnodes, n.Logger)
+	savedPeers, err := LoadPeers(n.dataDir)
+	if err != nil {
+		n.Logger.Warn("failed to load saved peers", zap.Error(err))
+	} else if len(savedPeers) > 0 {
+		n.Logger.Info("loaded saved peers", zap.Int("count", len(savedPeers)))
+	}
+
+	n.discovery, err = NewDiscovery(ctx, n.Host, enableMDNS, bootnodes, savedPeers, n.Logger)
 	if err != nil {
 		return fmt.Errorf("setup discovery: %w", err)
 	}
@@ -135,9 +149,97 @@ func (n *Node) Syncer() *Syncer {
 	return n.syncer
 }
 
-// Close shuts down the node.
+// Close shuts down the node, saving connected peers before stopping.
 func (n *Node) Close() error {
+	if err := n.SavePeers(); err != nil {
+		n.Logger.Warn("failed to save peers on shutdown", zap.Error(err))
+	}
 	return n.Host.Close()
+}
+
+// SavePeers writes the multiaddrs of currently connected peers to peers.json.
+func (n *Node) SavePeers() error {
+	peers := n.Host.Network().Peers()
+	var infos []peer.AddrInfo
+	for _, pid := range peers {
+		addrs := n.Host.Peerstore().Addrs(pid)
+		if len(addrs) > 0 {
+			infos = append(infos, peer.AddrInfo{ID: pid, Addrs: addrs})
+		}
+	}
+
+	if len(infos) == 0 {
+		return nil
+	}
+
+	// Marshal via an intermediate type so the JSON is human-readable.
+	type jsonPeer struct {
+		ID    string   `json:"id"`
+		Addrs []string `json:"addrs"`
+	}
+	var jp []jsonPeer
+	for _, info := range infos {
+		var addrs []string
+		for _, a := range info.Addrs {
+			addrs = append(addrs, a.String())
+		}
+		jp = append(jp, jsonPeer{ID: info.ID.String(), Addrs: addrs})
+	}
+
+	data, err := json.MarshalIndent(jp, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal peers: %w", err)
+	}
+
+	path := filepath.Join(n.dataDir, peersFile)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+
+	n.Logger.Info("saved peers", zap.Int("count", len(infos)), zap.String("path", path))
+	return nil
+}
+
+// LoadPeers reads previously saved peer addresses from peers.json.
+func LoadPeers(dataDir string) ([]peer.AddrInfo, error) {
+	path := filepath.Join(dataDir, peersFile)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+
+	type jsonPeer struct {
+		ID    string   `json:"id"`
+		Addrs []string `json:"addrs"`
+	}
+	var jp []jsonPeer
+	if err := json.Unmarshal(data, &jp); err != nil {
+		return nil, fmt.Errorf("unmarshal peers: %w", err)
+	}
+
+	var infos []peer.AddrInfo
+	for _, p := range jp {
+		pid, err := peer.Decode(p.ID)
+		if err != nil {
+			continue
+		}
+		var addrs []ma.Multiaddr
+		for _, a := range p.Addrs {
+			maddr, err := ma.NewMultiaddr(a)
+			if err != nil {
+				continue
+			}
+			addrs = append(addrs, maddr)
+		}
+		if len(addrs) > 0 {
+			infos = append(infos, peer.AddrInfo{ID: pid, Addrs: addrs})
+		}
+	}
+
+	return infos, nil
 }
 
 // peerNotifiee implements network.Notifiee to detect new peer connections.
