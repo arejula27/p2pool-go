@@ -30,8 +30,11 @@ type Node struct {
 	peerConnected  chan peer.ID
 }
 
-// NewNode creates and starts a new libp2p node.
-func NewNode(ctx context.Context, listenPort int, enableMDNS bool, bootnodes []string, dataDir string, logger *zap.Logger) (*Node, error) {
+// NewNode creates a new libp2p node with GossipSub but does NOT start
+// discovery. Call StartDiscovery after registering all stream handlers
+// (e.g. InitSyncer) to avoid races where peers connect before handlers
+// are ready.
+func NewNode(ctx context.Context, listenPort int, dataDir string, logger *zap.Logger) (*Node, error) {
 	listenAddr := fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", listenPort)
 
 	// Load or create persistent identity (stable peer ID across restarts)
@@ -73,13 +76,6 @@ func NewNode(ctx context.Context, listenPort int, enableMDNS bool, bootnodes []s
 		return nil, fmt.Errorf("setup pubsub: %w", err)
 	}
 
-	// Setup discovery
-	node.discovery, err = NewDiscovery(ctx, h, enableMDNS, bootnodes, logger)
-	if err != nil {
-		h.Close()
-		return nil, fmt.Errorf("setup discovery: %w", err)
-	}
-
 	logger.Info("p2p node started",
 		zap.String("peer_id", h.ID().String()),
 		zap.Int("port", listenPort),
@@ -90,6 +86,17 @@ func NewNode(ctx context.Context, listenPort int, enableMDNS bool, bootnodes []s
 	}
 
 	return node, nil
+}
+
+// StartDiscovery begins mDNS and DHT peer discovery. Must be called after
+// all stream handlers are registered (InitSyncer, etc.).
+func (n *Node) StartDiscovery(ctx context.Context, enableMDNS bool, bootnodes []string) error {
+	var err error
+	n.discovery, err = NewDiscovery(ctx, n.Host, enableMDNS, bootnodes, n.Logger)
+	if err != nil {
+		return fmt.Errorf("setup discovery: %w", err)
+	}
+	return nil
 }
 
 // IncomingShares returns the channel of shares received from peers.

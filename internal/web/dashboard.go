@@ -188,6 +188,7 @@ function fmtHash(h){
 function fmtDuration(s){
   if(!s||s<=0)return"-";
   var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);
+  if(d>36500)return"\u221e";
   if(d>365)return(d/365).toFixed(1)+"y";
   if(d>0)return d+"d "+h+"h";
   if(h>0)return h+"h "+m+"m";

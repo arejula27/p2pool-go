@@ -154,15 +154,21 @@ func (n *Node) Start(ctx context.Context) error {
 	)
 	n.workGen.Start(ctx)
 
-	// P2P Node — merge default bootnodes with user-provided ones
-	allBootnodes := append(config.DefaultBootnodes(n.config.BitcoinNetwork), n.config.P2PBootnodes...)
-	n.p2pNode, err = p2p.NewNode(ctx, n.config.P2PPort, n.config.EnableMDNS, allBootnodes, n.config.DataDir, n.logger)
+	// P2P Node — create host and register handlers before discovery starts
+	n.p2pNode, err = p2p.NewNode(ctx, n.config.P2PPort, n.config.DataDir, n.logger)
 	if err != nil {
 		return fmt.Errorf("p2p node: %w", err)
 	}
 
-	// Initialize sync protocol (serves locator-based share requests from peers)
+	// Register sync protocol BEFORE discovery so peers can't connect
+	// before the handler is ready (fixes "protocols not supported" race)
 	n.p2pNode.InitSyncer(n.handleLocatorRequest)
+
+	// Now start discovery — peers will find us with all handlers registered
+	allBootnodes := append(config.DefaultBootnodes(n.config.BitcoinNetwork), n.config.P2PBootnodes...)
+	if err := n.p2pNode.StartDiscovery(ctx, n.config.EnableMDNS, allBootnodes); err != nil {
+		return fmt.Errorf("p2p discovery: %w", err)
+	}
 
 	// Start event loop
 	go n.eventLoop(ctx)
