@@ -383,11 +383,15 @@ func TestShareChain_ReorgEventFields(t *testing.T) {
 func TestShareChain_PruneOldShares(t *testing.T) {
 	store := NewMemoryStore()
 	diffCalc := NewDifficultyCalculator(30 * time.Second)
-	// Creates an empty chain with 8640 share window
-	chain := NewShareChain(store, diffCalc, 8640, testNetwork, testLogger())
+	const windowSize = 25
+	// Creates an empty chain
+	chain := NewShareChain(store, diffCalc, windowSize, testNetwork, testLogger())
 
-	chainLen := 40 + 10
-	// Add 50 shares with timestamps 30s apart, starting from 30 minutes ago
+	//The chain will be populated with windowSize*2 + 10 shares
+	// This will mimic a real scenario where the chain removes the older 5 minutes of shares,
+	// and keeps a length of windowSize*2 shares
+	chainLen := windowSize*2 + 10
+	// Add shares with timestamps 30s apart
 	baseTime := time.Now().Add(-time.Duration(chainLen) * 30 * time.Second)
 	prev := [32]byte{}
 	for i := 0; i < chainLen; i++ {
