@@ -251,7 +251,7 @@ func (s *BoltStore) HashesNotIn(keep map[[32]byte]struct{}) [][32]byte {
 	defer s.mu.RUnlock()
 
 	// Collect hashes that are in the store but not in the keep set
-	toDelete := make([][32]byte, len(s.shares)-len(keep))
+	toDelete := make([][32]byte, 0, len(s.shares)-len(keep))
 	// Iterate over the whole store and check if the hash is in the keep set.
 	// If not, add it to the list of hashes to delete.
 	//  TODO: This can be obtimized by creating an inex of the store
