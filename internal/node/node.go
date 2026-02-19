@@ -404,6 +404,10 @@ func (n *Node) handleSubmission(sub *stratum.ShareSubmission) {
 
 func (n *Node) handleP2PShare(msg *p2p.ShareMsg) {
 	share := p2pShareToShare(msg)
+	if share == nil {
+		n.logger.Debug("rejected P2P share: failed to decompress coinbase")
+		return
+	}
 	if err := n.chain.AddShare(share); err != nil {
 		n.logger.Debug("rejected P2P share", zap.Error(err))
 		return
@@ -703,7 +707,9 @@ func (n *Node) syncFromAllPeers(ctx context.Context) {
 						break
 					}
 					for _, msg := range resp.Shares {
-						allShares = append(allShares, p2pShareToShare(&msg))
+						if s := p2pShareToShare(&msg); s != nil {
+							allShares = append(allShares, s)
+						}
 					}
 				}
 				dataCh <- dataResult{peerID: pid, shares: allShares}
@@ -1254,7 +1260,12 @@ func (n *Node) getPrevShareHash() [32]byte {
 }
 
 // p2pShareToShare converts a P2P share message to a types.Share.
+// Returns nil if the coinbase cannot be decompressed.
 func p2pShareToShare(msg *p2p.ShareMsg) *types.Share {
+	coinbaseTx, err := p2p.DecompressCoinbase(msg.CoinbaseTx)
+	if err != nil {
+		return nil
+	}
 	return &types.Share{
 		Header: types.ShareHeader{
 			Version:       msg.Version,
@@ -1268,7 +1279,7 @@ func p2pShareToShare(msg *p2p.ShareMsg) *types.Share {
 		PrevShareHash: msg.PrevShareHash,
 		ShareTarget:   util.CompactToTarget(msg.ShareTargetBits),
 		MinerAddress:  msg.MinerAddress,
-		CoinbaseTx:    msg.CoinbaseTx,
+		CoinbaseTx:    coinbaseTx,
 	}
 }
 
@@ -1291,7 +1302,7 @@ func shareToP2PMsg(share *types.Share) *p2p.ShareMsg {
 		PrevShareHash:   share.PrevShareHash,
 		ShareTargetBits: shareTargetBits,
 		MinerAddress:    share.MinerAddress,
-		CoinbaseTx:      share.CoinbaseTx,
+		CoinbaseTx:      p2p.CompressCoinbase(share.CoinbaseTx),
 	}
 }
 
