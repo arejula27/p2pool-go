@@ -126,7 +126,7 @@ func (n *Node) BroadcastShare(share *ShareMsg) error {
 // PeerDetail holds information about a connected peer for the dashboard.
 type PeerDetail struct {
 	ShortID   string
-	LatencyMs int64
+	LatencyUs int64
 	Address   string
 }
 
@@ -147,7 +147,7 @@ func (n *Node) PeerDetails() []PeerDetail {
 		}
 		details = append(details, PeerDetail{
 			ShortID:   pid.ShortString(),
-			LatencyMs: latency.Milliseconds(),
+			LatencyUs: latency.Microseconds(),
 			Address:   addr,
 		})
 	}

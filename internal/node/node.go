@@ -1098,7 +1098,7 @@ func (n *Node) dashboardData() *web.StatusData {
 	for i, pd := range peerDetails {
 		peers[i] = web.PeerInfo{
 			ID:      pd.ShortID,
-			Latency: pd.LatencyMs,
+			Latency: pd.LatencyUs,
 			Address: pd.Address,
 		}
 	}

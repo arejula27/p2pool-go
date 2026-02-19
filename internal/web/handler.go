@@ -70,7 +70,7 @@ type TreeShare struct {
 // PeerInfo describes a connected peer for the dashboard.
 type PeerInfo struct {
 	ID      string `json:"id"`
-	Latency int64  `json:"latency_ms"`
+	Latency int64  `json:"latency_us"`
 	Address string `json:"address"`
 }
 

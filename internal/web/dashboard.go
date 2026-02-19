@@ -928,13 +928,13 @@ function drawPeers(){
     var px=cx+radius*Math.cos(angle);
     var py=cy+radius*Math.sin(angle);
     var p=peerData[i];
-    var lat=p.latency_ms||0;
+    var lat=p.latency_us||0;
 
-    // Color by latency
+    // Color by latency (microseconds)
     var color;
     if(lat<=0){color="#555555";}
-    else if(lat<100){color="#33ff33";}
-    else if(lat<=500){color="#ffaa00";}
+    else if(lat<100000){color="#33ff33";}
+    else if(lat<=500000){color="#ffaa00";}
     else{color="#cc3333";}
 
     // Draw line from center to peer
@@ -979,7 +979,8 @@ function drawPeers(){
     var tooltip=document.getElementById("graph-tooltip");
     if(hitIdx>=0){
       var p=peerNodes[hitIdx].peer;
-      tooltip.innerHTML='<span class="tt-val">'+esc(p.id)+'</span>';
+      var latStr=p.latency_us>0?(p.latency_us<1000?p.latency_us+"\u00b5s":(p.latency_us/1000).toFixed(1)+"ms"):"unknown";
+      tooltip.innerHTML='<span class="tt-val">'+esc(p.id)+'</span><br><span class="tt-label">Latency:</span> '+latStr;
       tooltip.style.display="block";
       var tx=e.clientX+14,ty=e.clientY-40;
       if(tx+200>window.innerWidth)tx=e.clientX-214;
