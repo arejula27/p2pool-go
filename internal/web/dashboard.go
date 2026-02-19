@@ -197,7 +197,8 @@ function esc(s){
   if(!s)return"";
   return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
 }
-var _net="",_ourAddr="";
+var _net="",_ourAddr="",_prevTip="";
+var _shareSound=new Audio("/assets/share_found.mp3");
 function addrLink(addr){
   if(!addr)return"-";
   var prefix=(_net==="mainnet"||!_net)?"":"/"+ _net.replace("testnet3","testnet");
@@ -1007,6 +1008,11 @@ function drawPeers(){
 function update(data){
   _net=data.network||"";
   _ourAddr=data.our_address||"";
+  if(_prevTip&&data.tip_hash&&data.tip_hash!==_prevTip){
+    _shareSound.currentTime=0;
+    _shareSound.play().catch(function(){});
+  }
+  _prevTip=data.tip_hash||"";
   document.getElementById("shares").textContent=data.share_count;
   document.getElementById("miners-peers").textContent=data.miner_count+" | "+data.peer_count;
   document.getElementById("difficulty").textContent=fmtDiff(data.difficulty);

@@ -1,6 +1,7 @@
 package web
 
 import (
+	_ "embed"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -9,6 +10,9 @@ import (
 
 	"github.com/djkazic/p2pool-go/internal/metrics"
 )
+
+//go:embed assets/share_found.mp3
+var shareSoundMP3 []byte
 
 // StatusData holds all dashboard metrics.
 type StatusData struct {
@@ -133,7 +137,7 @@ func NewHandler(dataFunc func() *StatusData, shareLookup ShareLookupFunc) http.H
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Content-Security-Policy",
-			"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'")
+			"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; media-src 'self'")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Write([]byte(dashboardHTML))
 	})
@@ -163,6 +167,12 @@ func NewHandler(dataFunc func() *StatusData, shareLookup ShareLookupFunc) http.H
 		}
 
 		json.NewEncoder(w).Encode(detail)
+	})
+
+	mux.HandleFunc("/assets/share_found.mp3", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "audio/mpeg")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Write(shareSoundMP3)
 	})
 
 	mux.Handle("/metrics", metrics.Handler())
