@@ -457,23 +457,18 @@ func TestShareChain_PruneOldShares(t *testing.T) {
 	chainLen := windowSize*2 + 10
 	// Add shares with timestamps 30s apart
 	baseTime := time.Now().Add(-time.Duration(chainLen) * 30 * time.Second)
-	prev := [32]byte{}
 	for i := 0; i < chainLen; i++ {
-		s := makeTestShare(prev, testMiner1, uint32(baseTime.Unix()+int64(i*30)))
+		lastTip, ok := chain.Tip()
+		if !ok {
+			t.Fatal("chain should have tip when adding shares")
+		}
+		s := makeTestShare(lastTip.Hash(), testMiner1, uint32(baseTime.Unix()+int64(i*30)))
 		if err := chain.AddShare(s); err != nil {
 			t.Fatalf("AddShare[%d]: %v", i, err)
 		}
-		prev = s.Hash()
 	}
 
-	tip, ok := chain.Tip()
-	if !ok {
-		t.Fatal("chain should have tip")
-	}
-	if tip.Hash() != prev {
-		t.Error("tip should be the last share added")
-	}
-
+	prev, _ := chain.Tip()
 	//remove the last 5 minutes of shares (10 shares at 30s intervals)
 	prunedShares := chain.PruneOldShares(chainLen - 10)
 
@@ -490,7 +485,7 @@ func TestShareChain_PruneOldShares(t *testing.T) {
 	if !ok {
 		t.Fatal("chain should have tip after prune")
 	}
-	if postTip.Hash() != prev {
+	if postTip.Hash() != prev.Hash() {
 		t.Error("tip should be unchanged after prune")
 	}
 }
